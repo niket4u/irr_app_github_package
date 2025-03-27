@@ -43,15 +43,16 @@ if uploaded_file:
 
     st.sidebar.header("Filter Options")
 
-    # Display filters from Sheet2
-    industry_options = metadata["Industry"].dropna().unique().tolist()
-    region_options = metadata["Region"].dropna().unique().tolist()
-    status_options = metadata["Liquidation Status"].dropna().unique().tolist()
-    fund_options = cash_flows["Fund"].dropna().unique().tolist()
+    # Display dynamic filters from metadata
+    selected_filters = {}
+    for col in metadata.columns:
+        if col == "Deal":
+            continue
+        options = metadata[col].dropna().unique().tolist()
+        selected = st.sidebar.multiselect(f"Select {col}", options, default=options)
+        selected_filters[col] = selected
 
-    selected_industries = st.sidebar.multiselect("Select Industries", industry_options, default=industry_options)
-    selected_regions = st.sidebar.multiselect("Select Regions", region_options, default=region_options)
-    selected_status = st.sidebar.multiselect("Select Status", status_options, default=status_options)
+    fund_options = cash_flows["Fund"].dropna().unique().tolist()
     selected_funds = st.sidebar.multiselect("Select Funds (Portfolio)", fund_options, default=fund_options)
 
     # Date filter
@@ -59,12 +60,11 @@ if uploaded_file:
     max_date = cash_flows["Date"].max()
     date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
 
-    # Filter metadata and cash flows based on selection
-    filtered_deals = metadata[
-        metadata["Industry"].isin(selected_industries) &
-        metadata["Region"].isin(selected_regions) &
-        metadata["Liquidation Status"].isin(selected_status)
-    ]["Deal"].tolist()
+    # Filter metadata based on dynamic filters
+    deal_filter = metadata.copy()
+    for key, values in selected_filters.items():
+        deal_filter = deal_filter[deal_filter[key].isin(values)]
+    filtered_deals = deal_filter["Deal"].tolist()
 
     filtered_cash_flows = cash_flows[
         (cash_flows["Deal Code"].isin(filtered_deals)) &
@@ -77,20 +77,26 @@ if uploaded_file:
     merged_df = filtered_cash_flows.merge(metadata, left_on="Deal Code", right_on="Deal")
 
     # Group by categories and calculate IRR
-    group_columns = ["Industry", "Region", "Liquidation Status", "Fund"]
+        dynamic_columns = [col for col in metadata.columns if col != "Deal"]
+    # Add optional 'Year' column from cash flow dates
+    merged_df["Year"] = pd.to_datetime(merged_df["Date"]).dt.year
+
+    # Let user select grouping columns
+    available_group_fields = dynamic_columns + ["Fund", "Year"]
+    group_columns = st.sidebar.multiselect("Group IRR Results By", available_group_fields, default=available_group_fields), default=dynamic_columns + ["Fund"])
     irr_results = []
-    skipped_groups = []
+skipped_groups = []
 
     for group_keys, group_df in merged_df.groupby(group_columns):
         cf_series = group_df.groupby("Date")["Amount"].sum().sort_index()
         cash_flow_list = list(zip(cf_series.index, cf_series.values))
-        irr = xirr(cash_flow_list)
+                irr = xirr(cash_flow_list)
         if np.isnan(irr):
             skipped_groups.append(dict(zip(group_columns, group_keys)))
         irr_results.append(dict(zip(group_columns, group_keys), IRR=irr))
 
     result_df = pd.DataFrame(irr_results)
-    st.subheader("Calculated IRRs by Category")
+        st.subheader("Calculated IRRs by Category")
     st.dataframe(result_df)
 
     if skipped_groups:
@@ -103,18 +109,17 @@ if uploaded_file:
     # Deal-level IRR summary
     st.subheader("Deal-Level IRRs")
     deal_irr_list = []
-    skipped_deals = []
-
+skipped_deals = []
     for deal in merged_df["Deal Code"].unique():
         deal_df = merged_df[merged_df["Deal Code"] == deal]
         cf_series = deal_df.groupby("Date")["Amount"].sum().sort_index()
         cash_flow_list = list(zip(cf_series.index, cf_series.values))
-        irr = xirr(cash_flow_list)
+                irr = xirr(cash_flow_list)
         if np.isnan(irr):
             skipped_deals.append(deal)
         deal_irr_list.append({"Deal Code": deal, "IRR (%)": irr})
     deal_result_df = pd.DataFrame(deal_irr_list)
-    st.dataframe(deal_result_df)
+        st.dataframe(deal_result_df)
 
     if skipped_deals:
         st.warning("The following deals were skipped due to invalid cash flow structure:")
@@ -142,6 +147,7 @@ if uploaded_file:
     st.download_button("Download Deal IRRs as CSV", deal_csv.getvalue(), "deal_irrs.csv")
 
     # Export to Excel with multiple sheets
+    excel_buffer = StringIO()
     with pd.ExcelWriter("irr_results.xlsx", engine='openpyxl') as writer:
         result_df.to_excel(writer, sheet_name='Category IRRs', index=False)
         deal_result_df.to_excel(writer, sheet_name='Deal IRRs', index=False)
