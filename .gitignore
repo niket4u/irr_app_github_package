@@ -1,12 +1,10 @@
 
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.db
-*.sqlite3
-.env
-.venv/
+*.py[cod]
 *.egg-info/
+dist/
+build/
+.streamlit/
+.venv/
+env/
 *.xlsx
-irr_results.xlsx
