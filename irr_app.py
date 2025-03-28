@@ -82,7 +82,7 @@ if uploaded_file:
     merged_df = filtered_cash_flows.merge(metadata, left_on="Deal Code", right_on="Deal")
 
     # Group by categories and calculate IRR
-        dynamic_columns = [col for col in metadata.columns if col != "Deal"]
+    dynamic_columns = [col for col in metadata.columns if col != "Deal"]
     # Add optional 'Year' column from cash flow dates
     merged_df["Year"] = pd.to_datetime(merged_df["Date"]).dt.year
 
