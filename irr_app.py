@@ -23,16 +23,12 @@ def load_data(uploaded_file):
 def xirr(cash_flows):
     if len(cash_flows) < 2:
         return np.nan
-
-    # Ensure at least one positive and one negative cash flow
     values = [cf for _, cf in cash_flows]
     if not any(v > 0 for v in values) or not any(v < 0 for v in values):
         return np.nan
-
     def xnpv(rate):
         t0 = cash_flows[0][0]
         return sum([cf / (1 + rate) ** ((t - t0).days / 365.0) for t, cf in cash_flows])
-
     try:
         return round(newton(xnpv, 0.1) * 100, 2)
     except:
@@ -48,6 +44,9 @@ if uploaded_file:
 
     st.sidebar.header("Filter Options")
 
+    # Dynamically extract filter columns from metadata
+    dynamic_columns = [col for col in metadata.columns if col != "Deal"]
+
     # Display dynamic filters from metadata
     selected_filters = {}
     for col in metadata.columns:
@@ -60,11 +59,6 @@ if uploaded_file:
     fund_options = cash_flows["Fund"].dropna().unique().tolist()
     selected_funds = st.sidebar.multiselect("Select Funds (Portfolio)", fund_options, default=fund_options)
 
-    # Date filter
-    min_date = cash_flows["Date"].min()
-    max_date = cash_flows["Date"].max()
-    date_range = st.sidebar.date_input("Select Date Range", [min_date, max_date])
-
     # Filter metadata based on dynamic filters
     deal_filter = metadata.copy()
     for key, values in selected_filters.items():
@@ -73,41 +67,40 @@ if uploaded_file:
 
     filtered_cash_flows = cash_flows[
         (cash_flows["Deal Code"].isin(filtered_deals)) &
-        (cash_flows["Fund"].isin(selected_funds)) &
-        (cash_flows["Date"] >= pd.to_datetime(date_range[0])) &
-        (cash_flows["Date"] <= pd.to_datetime(date_range[1]))
+        (cash_flows["Fund"].isin(selected_funds))
     ]
 
     # Merge with metadata
     merged_df = filtered_cash_flows.merge(metadata, left_on="Deal Code", right_on="Deal")
 
-    # Group by categories and calculate IRR
-    dynamic_columns = [col for col in metadata.columns if col != "Deal"]
-    # Add optional 'Year' column from cash flow dates
+    # Add Year column
     merged_df["Year"] = pd.to_datetime(merged_df["Date"]).dt.year
 
     # Let user select grouping columns
     available_group_fields = dynamic_columns + ["Fund", "Year"]
-        default_groups = uploaded_group_columns if uploaded_group_columns else available_group_fields
-        if uploaded_group_columns:
+    default_groups = uploaded_group_columns if uploaded_group_columns else available_group_fields
+
+    if uploaded_group_columns:
         st.sidebar.info(f"Grouping columns loaded from Sheet3: {uploaded_group_columns}")
     else:
         st.sidebar.warning("No Sheet3 found. Default grouping used.")
 
-    group_columns = st.sidebar.multiselect("Group IRR Results By", available_group_fields, default=default_groups), default=dynamic_columns + ["Fund"])
+    group_columns = st.sidebar.multiselect("Group IRR Results By", available_group_fields, default=default_groups)
+
+    # Group by categories and calculate IRR
     irr_results = []
-skipped_groups = []
+    skipped_groups = []
 
     for group_keys, group_df in merged_df.groupby(group_columns):
         cf_series = group_df.groupby("Date")["Amount"].sum().sort_index()
         cash_flow_list = list(zip(cf_series.index, cf_series.values))
-                irr = xirr(cash_flow_list)
+        irr = xirr(cash_flow_list)
         if np.isnan(irr):
             skipped_groups.append(dict(zip(group_columns, group_keys)))
         irr_results.append(dict(zip(group_columns, group_keys), IRR=irr))
 
     result_df = pd.DataFrame(irr_results)
-        st.subheader("Calculated IRRs by Category")
+    st.subheader("Calculated IRRs by Category")
     st.dataframe(result_df)
 
     if skipped_groups:
@@ -120,17 +113,18 @@ skipped_groups = []
     # Deal-level IRR summary
     st.subheader("Deal-Level IRRs")
     deal_irr_list = []
-skipped_deals = []
+    skipped_deals = []
+
     for deal in merged_df["Deal Code"].unique():
         deal_df = merged_df[merged_df["Deal Code"] == deal]
         cf_series = deal_df.groupby("Date")["Amount"].sum().sort_index()
         cash_flow_list = list(zip(cf_series.index, cf_series.values))
-                irr = xirr(cash_flow_list)
+        irr = xirr(cash_flow_list)
         if np.isnan(irr):
             skipped_deals.append(deal)
         deal_irr_list.append({"Deal Code": deal, "IRR (%)": irr})
     deal_result_df = pd.DataFrame(deal_irr_list)
-        st.dataframe(deal_result_df)
+    st.dataframe(deal_result_df)
 
     if skipped_deals:
         st.warning("The following deals were skipped due to invalid cash flow structure:")
@@ -141,7 +135,7 @@ skipped_deals = []
     chart_df = result_df.dropna(subset=['IRR'])
     if not chart_df.empty:
         fig, ax = plt.subplots(figsize=(10, 5))
-        labels = chart_df.apply(lambda row: f"{row['Industry']} | {row['Region']} | {row['Fund']}", axis=1)
+        labels = chart_df.apply(lambda row: ' | '.join(str(row[col]) for col in group_columns), axis=1)
         ax.bar(labels, chart_df['IRR'])
         ax.set_ylabel("IRR (%)")
         ax.set_title("IRR by Category")
@@ -158,7 +152,6 @@ skipped_deals = []
     st.download_button("Download Deal IRRs as CSV", deal_csv.getvalue(), "deal_irrs.csv")
 
     # Export to Excel with multiple sheets
-    excel_buffer = StringIO()
     with pd.ExcelWriter("irr_results.xlsx", engine='openpyxl') as writer:
         result_df.to_excel(writer, sheet_name='Category IRRs', index=False)
         deal_result_df.to_excel(writer, sheet_name='Deal IRRs', index=False)
